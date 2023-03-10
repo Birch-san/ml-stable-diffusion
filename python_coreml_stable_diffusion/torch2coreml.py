@@ -337,6 +337,86 @@ def convert_text_encoder(pipe, args):
     gc.collect()
 
 
+def modify_coremltools_torch_frontend_upsample_nearest2d():
+    """
+    Modifies coremltools torch frontend for upsample_nearest2d to be robust to the `scale_factor_height` or `scale_factor_width` arguments being of non-float dtype
+    """
+    from coremltools.converters.mil import register_torch_op
+    from coremltools.converters.mil.mil import Builder as mb
+    from coremltools.converters.mil.frontend.torch.ops import _get_inputs, _get_scales_from_output_size
+    from coremltools.converters.mil.frontend.torch.torch_op_registry import _TORCH_OPS_REGISTRY
+    import numpy as _np
+    if "upsample_nearest2d" in _TORCH_OPS_REGISTRY:
+        del _TORCH_OPS_REGISTRY["upsample_nearest2d"]
+
+    @register_torch_op
+    def upsample_nearest2d(context, node):
+        inputs = _get_inputs(context, node)
+        _input = inputs[0]
+        scales_h, scales_w = None, None
+
+        output_size = inputs[1]
+        scale_factors = inputs[2]
+
+        if (
+            scale_factors is not None
+            and scale_factors.val is not None
+            and scale_factors.rank == 1
+            and scale_factors.shape[0] == 2
+        ):
+            # get scale factors from provided inputs
+            scale_factors = scale_factors.val
+            scales_h = scale_factors[0]
+            scales_w = scale_factors[1]
+        elif (
+            isinstance(output_size, list)
+            and output_size[0].val is None
+            and output_size[1].val is None
+        ):
+            # the input shape is dynamic and recompute_scale_factor = True
+            # need to trace the graph to find the scale factor
+            # we define a torch front end op mb.torch_upsample_nearest_neighbor to resolve the const scaling factor
+            torch_upsample_nearest2d = mb.torch_upsample_nearest_neighbor(
+                x=_input,
+                output_height=output_size[0],
+                output_width=output_size[1],
+                name=node.name,
+            )
+            context.add(torch_upsample_nearest2d)
+            return
+        else:
+            # infer scale factors from output sizes
+            scales = _get_scales_from_output_size(output_size, _input.shape)
+            if scales:
+                scales_h, scales_w = scales
+
+        if scales_h is None or scales_w is None:
+            if len(inputs) == 5:
+                # For torch==1.5.0, upsample_bilinear2d has 5 inputs.
+                scales_h = inputs[3]
+                scales_w = inputs[4]
+            else:
+                raise ValueError("Failed to infer scale factors from inputs.")
+
+        # CoreML only supports upsampling int32 or float32. either would work for us.
+        if scales_h.dtype == _np.float16 or scales_h.dtype == _np.float32:
+            assert scales_h == 2.0
+            scales_h = scales_h.astype(_np.int32)
+            assert scales_h == 2
+        if scales_h.dtype == _np.float16 or scales_h.dtype == _np.float32:
+            assert scales_w == 2.0
+            scales_w = scales_w.astype(_np.int32)
+            assert scales_w == 2
+
+        upsample_nearest2d = mb.upsample_nearest_neighbor(
+            x=_input,
+            scale_factor_height=scales_h,
+            scale_factor_width=scales_w,
+            name=node.name,
+        )
+        context.add(upsample_nearest2d)
+
+
 def modify_coremltools_torch_frontend_badbmm():
     """
     Modifies coremltools torch frontend for baddbmm to be robust to the `beta` argument being of non-float dtype:
