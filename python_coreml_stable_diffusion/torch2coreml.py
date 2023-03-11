@@ -756,11 +756,11 @@ def convert_unet(pipe, args):
         pipe.scheduler.set_timesteps(DEFAULT_NUM_INFERENCE_STEPS)
 
         sample_unet_inputs = OrderedDict([
-            ("sample", torch.rand(*sample_shape)),
+            ("sample", torch.rand(*sample_shape, device=pipe.unet.device, dtype=pipe.unet.dtype)),
             ("timestep",
              torch.tensor([pipe.scheduler.timesteps[0].item()] *
-                          (batch_size)).to(torch.float32)),
-            ("encoder_hidden_states", torch.rand(*encoder_hidden_states_shape))
+                          (batch_size), device=pipe.unet.device, dtype=torch.float32)),
+            ("encoder_hidden_states", torch.rand(*encoder_hidden_states_shape, device=pipe.unet.device, dtype=pipe.unet.dtype))
         ])
         sample_unet_inputs_spec = {
             k: (v.shape, v.dtype)
@@ -769,7 +769,7 @@ def convert_unet(pipe, args):
         logger.info(f"Sample inputs spec: {sample_unet_inputs_spec}")
 
         # Initialize reference unet
-        reference_unet = unet.UNet2DConditionModel(**pipe.unet.config).eval()
+        reference_unet = unet.UNet2DConditionModel(**pipe.unet.config).to(device=pipe.unet.device, dtype=pipe.unet.dtype).eval()
         load_state_dict_summary = reference_unet.load_state_dict(
             pipe.unet.state_dict())
 
@@ -787,8 +787,8 @@ def convert_unet(pipe, args):
 
         if args.check_output_correctness:
             baseline_out = pipe.unet(**baseline_sample_unet_inputs,
-                                     return_dict=False)[0].numpy()
-            reference_out = reference_unet(**sample_unet_inputs)[0].numpy()
+                                     return_dict=False)[0].detach().contiguous().cpu().numpy()
+            reference_out = reference_unet(**sample_unet_inputs)[0].detach().contiguous().cpu().numpy()
             report_correctness(baseline_out, reference_out,
                                "unet baseline to reference PyTorch")
 
@@ -796,7 +796,7 @@ def convert_unet(pipe, args):
         gc.collect()
 
         coreml_sample_unet_inputs = {
-            k: v.numpy().astype(np.float16)
+            k: v.detach().contiguous().cpu().numpy().astype(np.float16)
             for k, v in sample_unet_inputs.items()
         }
 
@@ -1052,10 +1052,16 @@ def main(args):
     if not args.convert_text_encoder:
         extra_kwargs['tokenizer']=None
         extra_kwargs['text_encoder']=None
+    if args.half:
+        extra_kwargs['torch_dtype']=torch.float16
     pipe = StableDiffusionPipeline.from_pretrained(args.model_version,
                                                    use_auth_token=True,
                                                    revision=args.model_revision,
                                                    **extra_kwargs)
+    pipe = pipe.to(torch.device('mps'))
+    if args.half:
+        pipe = pipe.to(torch.float16)
+    pipe.unet = pipe.unet.eval()
     logger.info("Done.")
 
     # Convert models
@@ -1194,6 +1200,10 @@ def parser_spec():
         default=
         "https://huggingface.co/openai/clip-vit-base-patch32/resolve/main/merges.txt",
         help="The URL to the merged pairs used in by the text tokenizer.")
+    parser.add_argument(
+        "--half",
+        action="store_true",
+        help="Cast StableDiffusionPipeline models to float16")
 
     return parser
 
