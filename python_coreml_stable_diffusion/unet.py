@@ -667,7 +667,7 @@ class TimestepEmbedding(nn.Module):
     def forward(self, sample):
         if len(sample.shape) == 2:
             sample = sample.unsqueeze(-1).unsqueeze(-1)
-        sample = self.linear_1(sample)
+        sample = self.linear_1(sample.to(dtype=self.linear_1.weight.dtype))
 
         if self.act is not None:
             sample = self.act(sample)
