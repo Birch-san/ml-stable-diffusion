@@ -744,9 +744,9 @@ def convert_unet(pipe, args):
 
         encoder_hidden_states_shape = (
             batch_size,
-            pipe.text_encoder.config.hidden_size,
+            768 if pipe.text_encoder is None else pipe.text_encoder.config.hidden_size,
             1,
-            pipe.text_encoder.config.max_position_embeddings,
+            77 if pipe.text_encoder is None else pipe.text_encoder.config.max_position_embeddings,
         )
 
         # Create the scheduled timesteps for downstream use
@@ -1041,9 +1041,19 @@ def main(args):
     # Instantiate diffusers pipe as reference
     logger.info(
         f"Initializing StableDiffusionPipeline with {args.model_version}..")
+    extra_kwargs={}
+    if not args.convert_vae_decoder and not args.convert_vae_encoder:
+        extra_kwargs['vae']=None
+    if not args.convert_safety_checker:
+        extra_kwargs['safety_checker']=None
+        extra_kwargs['feature_extractor']=None
+    if not args.convert_text_encoder:
+        extra_kwargs['tokenizer']=None
+        extra_kwargs['text_encoder']=None
     pipe = StableDiffusionPipeline.from_pretrained(args.model_version,
+                                                   use_auth_token=True,
                                                    revision=args.model_revision,
-                                                   use_auth_token=True)
+                                                   **extra_kwargs)
     logger.info("Done.")
 
     # Convert models
