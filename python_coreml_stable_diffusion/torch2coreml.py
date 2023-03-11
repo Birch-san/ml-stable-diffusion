@@ -1042,6 +1042,7 @@ def main(args):
     logger.info(
         f"Initializing StableDiffusionPipeline with {args.model_version}..")
     pipe = StableDiffusionPipeline.from_pretrained(args.model_version,
+                                                   revision=args.model_revision,
                                                    use_auth_token=True)
     logger.info("Done.")
 
@@ -1097,6 +1098,13 @@ def parser_spec():
         default="CompVis/stable-diffusion-v1-4",
         help=
         ("The pre-trained model checkpoint and configuration to restore. "
+         "For available versions: https://huggingface.co/models?search=stable-diffusion"
+         ))
+    parser.add_argument(
+        "--model-revision",
+        default=None,
+        help=
+        ("Revision of the pre-trained model checkpoint and configuration to restore. "
          "For available versions: https://huggingface.co/models?search=stable-diffusion"
          ))
     parser.add_argument("--compute-unit",
