@@ -100,8 +100,8 @@ def report_correctness(original_outputs, final_outputs, log_prefix):
     return final_psnr
 
 
-def _get_out_path(args, submodule_name):
-    fname = f"Stable_Diffusion_version_{args.model_version}_{submodule_name}.mlpackage"
+def _get_out_path(args, submodule_name, stem='Stable_Diffusion_version', extension='.mlpackage'):
+    fname = f"{stem}_{args.model_version}_{submodule_name}{extension}"
     fname = fname.replace("/", "_")
     return os.path.join(args.o, fname)
 
@@ -116,7 +116,8 @@ def _save_mlpackage(model, output_path):
 
 def _convert_to_coreml(submodule_name, torchscript_module, sample_inputs,
                        output_names, args):
-    out_path = _get_out_path(args, submodule_name)
+    out_path_stem = _get_out_path(args, submodule_name, stem=args.out_model_name_stem, extension='')
+    out_path = f'{out_path_stem}.mlpackage'
 
     if os.path.exists(out_path):
         logger.info(f"Skipping export because {out_path} already exists")
@@ -705,7 +706,8 @@ def convert_vae_encoder(pipe, args):
 def convert_unet(pipe, args):
     """ Converts the UNet component of Stable Diffusion
     """
-    out_path = _get_out_path(args, "unet")
+    out_path_stem = _get_out_path(args, "unet", stem=args.out_model_name_stem, extension='')
+    out_path = f'{out_path_stem}.mlpackage'
 
     # Check if Unet was previously exported and then chunked
     unet_chunks_exist = all(
@@ -1148,6 +1150,10 @@ def parser_spec():
         "-o",
         default=os.getcwd(),
         help="The resulting mlpackages will be saved into this directory")
+    parser.add_argument(
+        "--out-model-name-stem",
+        default="Stable_Diffusion_version",
+        help="prefix with which to name converted models")
     parser.add_argument(
         "--check-output-correctness",
         action="store_true",
