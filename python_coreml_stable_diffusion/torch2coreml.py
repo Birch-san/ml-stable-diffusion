@@ -1056,6 +1056,8 @@ def main(args):
         f"Initializing StableDiffusionPipeline with {args.model_version}..")
     extra_kwargs={}
     if not args.convert_vae_decoder and not args.convert_vae_encoder:
+        # note: you'll have trouble with this unless you modify pipeline_stable_diffusion
+        # to employ a fallback when reading vae.config
         extra_kwargs['vae']=None
     if not args.convert_safety_checker:
         extra_kwargs['safety_checker']=None
