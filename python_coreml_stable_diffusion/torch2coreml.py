@@ -3,7 +3,10 @@
 # Copyright (C) 2022 Apple Inc. All Rights Reserved.
 #
 
+from dataclasses import dataclass
+from diffusers.models.cross_attention import CrossAttnProcessor
 from python_coreml_stable_diffusion import unet
+from .diffusers_unet_adapter import UndictedDiffusersUnet
 
 import argparse
 from collections import OrderedDict, defaultdict
@@ -769,9 +772,14 @@ def convert_unet(pipe, args):
         logger.info(f"Sample inputs spec: {sample_unet_inputs_spec}")
 
         # Initialize reference unet
-        reference_unet = unet.UNet2DConditionModel(**pipe.unet.config).to(device=pipe.unet.device, dtype=pipe.unet.dtype).eval()
-        load_state_dict_summary = reference_unet.load_state_dict(
-            pipe.unet.state_dict())
+        pipe.unet = pipe.unet.eval()
+        if args.diffusers_unet:
+            pipe.unet.set_attn_processor(CrossAttnProcessor())
+            reference_unet = UndictedDiffusersUnet(pipe.unet)
+        else:
+            reference_unet = unet.UNet2DConditionModel(**pipe.unet.config).to(device=pipe.unet.device, dtype=pipe.unet.dtype).eval()
+            load_state_dict_summary = reference_unet.load_state_dict(
+                pipe.unet.state_dict())
 
         # Prepare inputs
         baseline_sample_unet_inputs = deepcopy(sample_unet_inputs)
@@ -792,8 +800,9 @@ def convert_unet(pipe, args):
             report_correctness(baseline_out, reference_out,
                                "unet baseline to reference PyTorch")
 
-        del pipe.unet
-        gc.collect()
+        if not args.diffusers_unet:
+            del pipe.unet
+            gc.collect()
 
         coreml_sample_unet_inputs = {
             k: v.detach().contiguous().cpu().numpy().astype(np.float16)
@@ -803,6 +812,8 @@ def convert_unet(pipe, args):
         coreml_unet, out_path = _convert_to_coreml("unet", reference_unet,
                                                    coreml_sample_unet_inputs,
                                                    ["noise_pred"], args)
+        if args.diffusers_unet:
+            del pipe.unet
         del reference_unet
         gc.collect()
 
@@ -1061,7 +1072,6 @@ def main(args):
     pipe = pipe.to(torch.device('mps'))
     if args.half:
         pipe = pipe.to(torch.float16)
-    pipe.unet = pipe.unet.eval()
     logger.info("Done.")
 
     # Convert models
@@ -1204,6 +1214,10 @@ def parser_spec():
         "--half",
         action="store_true",
         help="Cast StableDiffusionPipeline models to float16")
+    parser.add_argument(
+        "--diffusers-unet",
+        action="store_true",
+        help="Convert diffusers Unet instead of ANE-optimized Unet")
 
     return parser
 
